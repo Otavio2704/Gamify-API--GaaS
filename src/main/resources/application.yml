@@ -1,0 +1,117 @@
+spring:
+  profiles:
+    active: dev
+
+---
+# ─── DEV (H2) ────────────────────────────────────────────────────────────────
+spring:
+  config:
+    activate:
+      on-profile: dev
+
+  datasource:
+    url: jdbc:h2:mem:gamifydb;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+        dialect: org.hibernate.dialect.H2Dialect
+
+  jackson:
+    default-property-inclusion: non_null
+    serialization:
+      write-dates-as-timestamps: false
+
+gamify:
+  jwt:
+    secret: dev-secret-key-que-deve-ter-pelo-menos-256-bits-de-entropia-aqui
+    expiration-ms: 86400000   # 24h
+
+server:
+  port: 8080
+
+logging:
+  level:
+    com.gamifyapi: DEBUG
+    org.hibernate.SQL: DEBUG
+
+---
+# ─── TEST (H2) ───────────────────────────────────────────────────────────────
+spring:
+  config:
+    activate:
+      on-profile: test
+
+  datasource:
+    url: jdbc:h2:mem:gamifytest;MODE=PostgreSQL;DB_CLOSE_DELAY=-1
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    show-sql: false
+
+  jackson:
+    default-property-inclusion: non_null
+    serialization:
+      write-dates-as-timestamps: false
+
+gamify:
+  jwt:
+    secret: test-secret-key-que-deve-ter-pelo-menos-256-bits-de-entropia-aqui-ok
+    expiration-ms: 3600000    # 1h
+
+---
+# ─── PROD (PostgreSQL) ───────────────────────────────────────────────────────
+spring:
+  config:
+    activate:
+      on-profile: prod
+
+  datasource:
+    url: ${DB_URL}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 30000
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+
+  jackson:
+    default-property-inclusion: non_null
+    serialization:
+      write-dates-as-timestamps: false
+
+gamify:
+  jwt:
+    secret: ${JWT_SECRET}
+    expiration-ms: ${JWT_EXPIRATION_MS:86400000}
+
+server:
+  port: ${PORT:8080}
+
+logging:
+  level:
+    com.gamifyapi: INFO

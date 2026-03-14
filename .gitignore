@@ -1,0 +1,12 @@
+# Build do Maven
+/target/
+
+# Arquivos de ambiente
+.env
+
+# Logs
+*.log
+
+# Arquivos de sistema/IDE
+.DS_Store
+.idea/
