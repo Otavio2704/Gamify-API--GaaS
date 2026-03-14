@@ -1,420 +1,326 @@
-# GamifyAPI
+# GamifyAPI 🎮
 
-API REST de Gamificacao como Servico (GaaS), multi-tenant, para adicionar XP, niveis, conquistas, rankings e streaks em aplicacoes externas.
+> **Gamification as a Service (GaaS)** — REST API multi-tenant para integrar XP, níveis, conquistas, streaks e rankings em qualquer aplicação.
 
-## Sumario
+---
 
-- Visao Geral
-- Principais Funcionalidades
-- Stack Tecnologica
-- Arquitetura
-- Estrutura do Projeto
-- Como Executar
-- Variaveis de Ambiente
-- Documentacao da API
-- Autenticacao e Seguranca
-- Endpoints Principais
-- Exemplo de Fluxo de Integracao
-- Formato Padrao de Erro
-- Testes
-- Perfis Spring
-- Docker
-- Documentacao Complementar
+## Sobre o projeto
 
-## Visao Geral
+A GamifyAPI é uma plataforma de gamificação pronta para ser integrada em apps, plataformas educacionais, sistemas de fidelidade ou qualquer produto que queira engajar usuários via mecânicas de jogo.
 
-A GamifyAPI foi criada para funcionar como camada de gamificacao desacoplada do produto cliente. Em vez de implementar regras de XP e conquistas em cada sistema, a aplicacao cliente envia eventos de acao para esta API e recebe o estado atualizado do player.
+Cada empresa que se cadastra recebe um **tenant isolado** com sua própria configuração de ações, conquistas, níveis e webhooks. A integração do produto final é feita por **API Key**, sem expor credenciais de admin.
 
-A plataforma oferece:
+---
 
-- multi-tenancy por tenant (empresa/produto)
-- autenticacao administrativa com JWT
-- autenticacao de integracao com API Key
-- processamento de acao com cooldown, XP, level up, streak, conquistas e ranking
-- webhooks assinados para eventos de gamificacao
+## Funcionalidades
 
-## Principais Funcionalidades
+- **XP e Progressão** — ações concedем XP configurável; o motor de níveis é customizável por tenant
+- **Conquistas (Badges)** — 5 tipos de critério: `ACTION_COUNT`, `STREAK`, `LEVEL_REACHED`, `XP_TOTAL`, `MULTI_ACTION`
+- **Streaks** — contagem de dias consecutivos com reset automático e rastreamento do recorde
+- **Leaderboard** — rankings global, semanal e mensal com paginação
+- **Webhooks assíncronos** — notificações para `LEVEL_UP`, `ACHIEVEMENT_UNLOCKED`, `STREAK_MILESTONE`, `RANK_CHANGED` com 3 tentativas e backoff exponencial
+- **Dual Auth** — JWT para admins do tenant + API Key para integração dos produtos
+- **Multi-tenant** — isolamento completo por ThreadLocal; dados nunca se cruzam entre tenants
+- **Dashboard** — métricas agregadas e gráfico de ações por dia
 
-- Cadastro e login de tenant admin
-- Gerenciamento de API Keys por tenant
-- CRUD de definicoes de acoes (codigo, XP, cooldown)
-- Configuracao de niveis e progressao
-- CRUD de conquistas com criterios dinamicos
-- Processamento de acao em endpoint unico de integracao
-- Consultas de perfil do player, conquistas e timeline
-- Leaderboard global, semanal e mensal
-- Dashboard com metricas agregadas
-- Webhooks assinados com retentativa assincrona
+---
 
-## Stack Tecnologica
+## Stack
 
-- Java 17
-- Spring Boot 3.2.x
-- Maven
-- Spring Data JPA / Hibernate
-- Spring Security (JWT + API Key)
-- PostgreSQL (producao)
-- H2 (desenvolvimento e testes)
-- JUnit 5 / Mockito
-- SpringDoc OpenAPI 3 (Swagger UI)
-- Bean Validation
+| Camada | Tecnologia |
+|--------|-----------|
+| Linguagem | Java 17 |
+| Framework | Spring Boot 3.2 |
+| Segurança | Spring Security + JJWT 0.12 |
+| Persistência | Spring Data JPA + PostgreSQL |
+| Documentação | SpringDoc OpenAPI 3 (Swagger UI) |
+| Testes | JUnit 5 + Mockito + AssertJ |
+| Build | Maven 3.9 |
+| Container | Docker + Docker Compose |
+
+---
 
 ## Arquitetura
 
-Arquitetura em camadas:
-
-- Security Layer: filtros de JWT e API Key + TenantContext
-- Controller Layer: validacao de entrada e exposicao HTTP
-- Service Layer: regras de negocio e orquestracao
-- Repository Layer: acesso a dados com Spring Data
-- Database Layer: PostgreSQL/H2
-
-Fluxo principal de processamento de acao:
-
-1. Recebe evento no endpoint de acoes.
-2. Resolve/valida tenant e player.
-3. Verifica cooldown da acao.
-4. Concede XP.
-5. Calcula level up (inclusive multiplo).
-6. Atualiza streak.
-7. Avalia e desbloqueia conquistas.
-8. Atualiza ranking.
-9. Dispara webhooks assinados de forma assincrona.
-
-## Estrutura do Projeto
-
-```text
-gamify-api/
-|- src/main/java/com/gamifyapi/
-|  |- achievement/      # Engine de conquistas e evaluators
-|  |- config/           # Configuracoes Spring (Security, OpenAPI, etc.)
-|  |- controller/       # Endpoints REST
-|  |- dto/              # DTOs de request/response
-|  |- entity/           # Entidades JPA
-|  |- enums/            # Enumeracoes de dominio
-|  |- exception/        # Excecoes customizadas e handler global
-|  |- repository/       # Repositorios Spring Data
-|  |- security/         # JWT, API Key, TenantContext e filtros
-|  |- service/          # Regras de negocio
-|- src/main/resources/
-|  |- application.yml   # Perfis dev/test/prod
-|- src/test/java/com/gamifyapi/
-|  |- unit/             # Testes unitarios
-|  |- util/             # Fabrica de dados auxiliares
-|- docker-compose.yml
-|- Dockerfile
-|- .env.example
-|- pom.xml
+```
+┌─────────────────────────────────────────────────────┐
+│                   GamifyAPI                         │
+│                                                     │
+│  Controller → Service → Repository → PostgreSQL     │
+│                                                     │
+│  ┌─────────────────────────────────────┐            │
+│  │         GamificationService         │            │
+│  │  (orquestrador principal)           │            │
+│  │                                     │            │
+│  │  PlayerService → XpService          │            │
+│  │  LevelService  → StreakService      │            │
+│  │  AchievementEngine (Strategy)       │            │
+│  │  RankingService → WebhookService    │            │
+│  └─────────────────────────────────────┘            │
+│                                                     │
+│  Segurança:                                         │
+│  ApiKeyFilter → JwtFilter → SecurityContext         │
+│  TenantContext (ThreadLocal)                        │
+└─────────────────────────────────────────────────────┘
 ```
 
-## Como Executar
+O **AchievementEngine** usa o padrão **Strategy** — cada `CriteriaType` tem seu próprio `AchievementCriteriaEvaluator`, desacoplado via `EvaluatorFactory`.
 
-### Pre-requisitos
+---
+
+## Endpoints
+
+### Autenticação (JWT)
+| Método | Rota | Descrição |
+|--------|------|-----------|
+| `POST` | `/api/v1/auth/register` | Cadastra novo tenant |
+| `POST` | `/api/v1/auth/login` | Autentica e retorna JWT |
+
+### Integração (API Key — `X-API-Key`)
+| Método | Rota | Descrição |
+|--------|------|-----------|
+| `POST` | `/api/v1/actions` | **Endpoint principal** — processa ação do player |
+| `GET` | `/api/v1/players/{id}` | Perfil completo do player |
+| `GET` | `/api/v1/players/{id}/achievements` | Conquistas desbloqueadas e bloqueadas |
+| `GET` | `/api/v1/players/{id}/timeline` | Histórico de ações (paginado) |
+| `GET` | `/api/v1/leaderboard` | Ranking global |
+| `GET` | `/api/v1/leaderboard/weekly` | Ranking semanal |
+| `GET` | `/api/v1/leaderboard/monthly` | Ranking mensal |
+
+### Administração (JWT)
+| Método | Rota | Descrição |
+|--------|------|-----------|
+| `POST/GET/PUT/DELETE` | `/api/v1/actions/definitions` | CRUD de definições de ações |
+| `POST/GET/PUT/DELETE` | `/api/v1/achievements` | CRUD de conquistas |
+| `POST/GET/PUT/DELETE` | `/api/v1/webhooks` | CRUD de webhooks |
+| `POST/GET/DELETE` | `/api/v1/api-keys` | Gerenciamento de API Keys |
+| `POST/GET` | `/api/v1/levels` | Configuração da tabela de níveis |
+| `GET` | `/api/v1/dashboard/overview` | Métricas do tenant |
+| `GET` | `/api/v1/dashboard/actions-chart` | Gráfico de ações por dia |
+
+---
+
+## Rodando localmente
+
+### Pré-requisitos
 
 - Java 17+
 - Maven 3.9+
-- Docker e Docker Compose (opcional)
+- Docker (opcional, para banco local)
 
-### 1) Rodar localmente em desenvolvimento (H2)
+### Modo dev (H2 em memória)
 
 ```bash
-mvn spring-boot:run
+# Clone o repositório
+git clone https://github.com/seu-usuario/gamify-api.git
+cd gamify-api
+
+# Sobe a aplicação com perfil dev (H2)
+./mvnw spring-boot:run
 ```
 
-Como o perfil dev e o padrao, a aplicacao sobe com H2 em memoria.
+A aplicação sobe em `http://localhost:8080`. O banco H2 é criado em memória automaticamente.
 
-URLs uteis:
-
-- API: http://localhost:8080
-- Swagger UI: http://localhost:8080/swagger-ui/index.html
-- OpenAPI JSON: http://localhost:8080/v3/api-docs
-- H2 Console (dev): http://localhost:8080/h2-console
-
-### 2) Rodar testes
+### Com Docker Compose (banco local PostgreSQL)
 
 ```bash
-mvn test
-```
-
-### 3) Build do artefato
-
-```bash
-mvn clean package
-```
-
-### 4) Rodar com Docker Compose (app em prod + banco externo via env)
-
-```bash
+# Copia o arquivo de variáveis
 cp .env.example .env
-# edite o .env com os dados reais do seu banco
+# Edite o .env com as credenciais do seu banco externo (se for usar prod)
 
-docker compose up --build
-```
-
-### 5) Rodar PostgreSQL local auxiliar (perfil local-db)
-
-```bash
+# Sobe com banco PostgreSQL local
 docker compose --profile local-db up --build
 ```
 
-Esse perfil sobe um PostgreSQL local para apoio em desenvolvimento.
-
-## Variaveis de Ambiente
-
-Arquivo base: .env.example
-
-| Variavel | Obrigatoria | Descricao |
-|---|---|---|
-| DB_URL | Sim (prod) | URL JDBC do PostgreSQL |
-| DB_USERNAME | Sim (prod) | Usuario do banco |
-| DB_PASSWORD | Sim (prod) | Senha do banco |
-| JWT_SECRET | Sim (prod) | Segredo JWT (minimo recomendado: 256 bits de entropia) |
-| JWT_EXPIRATION_MS | Nao | Expiracao do token em ms (padrao 86400000) |
-| PORT | Nao | Porta HTTP da aplicacao (padrao 8080) |
-
-## Documentacao da API
-
-Documentacao interativa:
-
-- Swagger UI: http://localhost:8080/swagger-ui/index.html
-- OpenAPI JSON: http://localhost:8080/v3/api-docs
-
-## Autenticacao e Seguranca
-
-A API possui dois modos de autenticacao:
-
-- JWT (rotas administrativas do tenant)
-- API Key (rotas de integracao)
-
-Headers:
-
-- JWT: Authorization: Bearer <token>
-- API Key: X-API-Key: <sua-chave>
-
-Regras importantes:
-
-- API Keys sao armazenadas com hash SHA-256
-- toda consulta e filtrada por tenant
-- TenantContext (ThreadLocal) define o tenant atual da requisicao
-
-## Endpoints Principais
-
-Base path: /api/v1
-
-### Publicos
-
-- POST /auth/register
-- POST /auth/login
-
-### Admin (JWT)
-
-- POST /api-keys
-- GET /api-keys
-- DELETE /api-keys/{id}
-
-- POST /actions/definitions
-- GET /actions/definitions
-- PUT /actions/definitions/{id}
-- DELETE /actions/definitions/{id}
-
-- POST /levels
-- GET /levels
-
-- POST /achievements
-- GET /achievements
-- PUT /achievements/{id}
-- DELETE /achievements/{id}
-
-- POST /webhooks
-- GET /webhooks
-- PUT /webhooks/{id}
-- DELETE /webhooks/{id}
-
-- GET /dashboard/overview
-- GET /dashboard/actions-chart?dias=30
-
-### Integracao (API Key)
-
-- POST /actions
-- GET /players/{externalId}
-- GET /players/{externalId}/achievements
-- GET /players/{externalId}/timeline?page=0&size=20
-- GET /leaderboard?page=0&size=20
-- GET /leaderboard/weekly?page=0&size=20
-- GET /leaderboard/monthly?page=0&size=20
-
-## Exemplo de Fluxo de Integracao
-
-### 1) Registrar tenant
+### Produção (banco externo)
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/auth/register \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name":"Meu App",
-    "email":"admin@meuapp.com",
-    "password":"senhaForte123"
-  }'
+# Configure as variáveis de ambiente
+cp .env.example .env
+# Edite .env com DB_URL, DB_USERNAME, DB_PASSWORD e JWT_SECRET
+
+# Sobe apenas a aplicação (banco externo)
+docker compose up --build
 ```
 
-### 2) Fazer login e obter JWT
+---
 
-```bash
-curl -X POST http://localhost:8080/api/v1/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{
-    "email":"admin@meuapp.com",
-    "password":"senhaForte123"
-  }'
-```
+## Variáveis de ambiente
 
-Resposta esperada (resumo):
+| Variável | Descrição | Obrigatório em prod |
+|----------|-----------|---------------------|
+| `DB_URL` | JDBC URL do banco PostgreSQL | ✅ |
+| `DB_USERNAME` | Usuário do banco | ✅ |
+| `DB_PASSWORD` | Senha do banco | ✅ |
+| `JWT_SECRET` | Chave secreta JWT (mín. 256 bits) | ✅ |
+| `JWT_EXPIRATION_MS` | Expiração do token em ms (padrão: 86400000) | ❌ |
 
-```json
+---
+
+## Documentação interativa
+
+Com a aplicação rodando:
+
+- **Swagger UI:** `http://localhost:8080/swagger-ui/index.html`
+- **OpenAPI JSON:** `http://localhost:8080/v3/api-docs`
+- **H2 Console (dev):** `http://localhost:8080/h2-console`
+
+---
+
+## Exemplo de integração
+
+### 1. Cadastrar tenant
+```http
+POST /api/v1/auth/register
+Content-Type: application/json
+
 {
-  "token": "<jwt>",
-  "expiresIn": 86400000,
-  "tenant": { "id": 1, "name": "Meu App" }
+  "name": "Minha Plataforma",
+  "email": "admin@plataforma.com",
+  "password": "senha123"
 }
 ```
 
-### 3) Criar API Key
+### 2. Fazer login e obter JWT
+```http
+POST /api/v1/auth/login
+Content-Type: application/json
 
-```bash
-curl -X POST http://localhost:8080/api/v1/api-keys \
-  -H "Authorization: Bearer <jwt>" \
-  -H "Content-Type: application/json" \
-  -d '{"label":"producao"}'
+{
+  "email": "admin@plataforma.com",
+  "password": "senha123"
+}
 ```
 
-Guarde o campo key retornado na criacao.
+### 3. Criar uma definição de ação (autenticado com JWT)
+```http
+POST /api/v1/actions/definitions
+Authorization: Bearer {token}
+Content-Type: application/json
 
-### 4) Criar definicao de acao
-
-```bash
-curl -X POST http://localhost:8080/api/v1/actions/definitions \
-  -H "Authorization: Bearer <jwt>" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "code":"completed_lesson",
-    "displayName":"Aula completada",
-    "description":"Player concluiu uma aula",
-    "xpValue":50,
-    "cooldownSeconds":60
-  }'
+{
+  "code": "completed_lesson",
+  "displayName": "Aula concluída",
+  "xpValue": 50,
+  "cooldownSeconds": 0
+}
 ```
 
-### 5) Processar acao do player
+### 4. Criar uma API Key para integração
+```http
+POST /api/v1/api-keys
+Authorization: Bearer {token}
+Content-Type: application/json
 
-```bash
-curl -X POST http://localhost:8080/api/v1/actions \
-  -H "X-API-Key: <api_key>" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "playerId":"player-123",
-    "playerName":"Otavio",
-    "actionCode":"completed_lesson"
-  }'
+{
+  "label": "App Mobile"
+}
 ```
 
-Resposta esperada (resumo):
+### 5. Processar ação do usuário (via API Key)
+```http
+POST /api/v1/actions
+X-API-Key: gapi_sua_chave_aqui
+Content-Type: application/json
 
+{
+  "playerId": "user-456",
+  "playerName": "Maria",
+  "actionCode": "completed_lesson"
+}
+```
+
+**Resposta:**
 ```json
 {
-  "playerId": "player-123",
+  "playerId": "user-456",
   "action": "completed_lesson",
   "xpGranted": 50,
-  "totalXp": 50,
-  "currentLevel": 1,
-  "levelUp": { "happened": false },
-  "streak": { "currentStreak": 1, "longestStreak": 1, "wasReset": false },
+  "totalXp": 150,
+  "currentLevel": 2,
+  "levelUp": {
+    "happened": true,
+    "previousLevel": 1,
+    "newLevel": 2,
+    "title": "Aprendiz"
+  },
+  "streak": {
+    "currentStreak": 3,
+    "longestStreak": 3,
+    "wasReset": false
+  },
   "newAchievements": [],
   "leaderboardPosition": 1,
-  "processedAt": "2026-03-14T12:00:00Z"
+  "processedAt": "2025-03-14T12:00:00Z"
 }
 ```
 
-## Formato Padrao de Erro
+---
 
-A API usa um contrato padrao de erro:
+## Tipos de critério para conquistas
 
-```json
-{
-  "status": 422,
-  "message": "Regra de negocio violada",
-  "timestamp": "2026-03-14T12:00:00Z",
-  "details": []
-}
-```
+| Tipo | Estrutura do `criteriaValue` | Descrição |
+|------|------------------------------|-----------|
+| `ACTION_COUNT` | `{"actionCode": "login", "count": 10}` | Executou ação N vezes |
+| `STREAK` | `{"minStreak": 7}` | Streak mínimo de dias |
+| `LEVEL_REACHED` | `{"level": 5}` | Atingiu nível mínimo |
+| `XP_TOTAL` | `{"minXp": 5000}` | Acumulou XP total mínimo |
+| `MULTI_ACTION` | `{"actionCodes": ["a", "b", "c"]}` | Executou cada ação ao menos uma vez |
 
-Mapeamentos principais:
-
-- 400: validacao de entrada
-- 401: autenticacao invalida
-- 404: recurso nao encontrado
-- 409: conflito/duplicidade
-- 422: regra de negocio
-- 429: cooldown ativo (com header Retry-After)
-- 500: erro interno
+---
 
 ## Testes
 
-Testes unitarios existentes cobrem engine e servicos centrais.
-
-Executar:
-
 ```bash
-mvn test
+# Roda todos os testes
+./mvnw test
+
+# Roda apenas testes de um pacote
+./mvnw test -Dtest="com.gamifyapi.unit.*"
 ```
 
-Pasta principal de testes:
+A suíte cobre os serviços críticos com testes unitários via Mockito:
 
-- src/test/java/com/gamifyapi/unit
+- `GamificationServiceTest` — orquestração do fluxo principal
+- `AchievementEngineTest` — avaliação e desbloqueio de conquistas
+- `LevelServiceTest` — cálculo de nível e XP
+- `StreakServiceTest` — regras de streak
+- `CooldownServiceTest` — validação de cooldown
 
-## Perfis Spring
+---
 
-- dev (padrao): H2 em memoria, SQL logado, console H2 habilitado
-- test: H2 em memoria para execucao de testes
-- prod: PostgreSQL, configuracao via variaveis de ambiente
+## Segurança
 
-Forcar perfil manualmente:
+- **Senhas** armazenadas com BCrypt
+- **API Keys** nunca persistidas — apenas o hash SHA-256 fica no banco
+- **JWT** com `sub` = tenant ID, assinado com HMAC-SHA256
+- **Webhooks** assinados com HMAC-SHA256 no header `X-Gamify-Signature`
+- **Multi-tenancy** garantido por ThreadLocal — nenhuma query acessa dados de outro tenant
 
-```bash
-mvn spring-boot:run -Dspring-boot.run.profiles=prod
+---
+
+## Estrutura do projeto
+
+```
+src/
+├── main/java/com/gamifyapi/
+│   ├── achievement/          # Strategy pattern — engine de conquistas
+│   ├── config/               # Spring Security, Async, Jackson, OpenAPI
+│   ├── controller/           # REST controllers
+│   ├── dto/                  # Request e Response records
+│   ├── entity/               # Entidades JPA
+│   ├── enums/                # CriteriaType, RankingPeriod, etc.
+│   ├── exception/            # Exceções de domínio + GlobalExceptionHandler
+│   ├── repository/           # Interfaces JPA + queries customizadas
+│   ├── security/             # JWT, ApiKey, TenantContext
+│   └── service/              # Lógica de negócio
+└── test/java/com/gamifyapi/
+    ├── unit/                 # Testes unitários por serviço
+    └── util/                 # TestDataFactory
 ```
 
-## Docker
+---
 
-### Build da imagem
+## Licença
 
-```bash
-docker build -t gamify-api:local .
-```
-
-### Rodar container diretamente
-
-```bash
-docker run --rm -p 8080:8080 \
-  -e SPRING_PROFILES_ACTIVE=prod \
-  -e DB_URL="jdbc:postgresql://host:5432/gamifyapi" \
-  -e DB_USERNAME="gamify" \
-  -e DB_PASSWORD="segredo" \
-  -e JWT_SECRET="secret-forte-com-minimo-256-bits" \
-  gamify-api:local
-```
-
-## Documentacao Complementar
-
-Para aprofundar, consulte:
-
-- .github/docs/project-context.md
-- .github/docs/architecture.md
-- .github/docs/coding-standarts.md
-- .github/docs/api-contracts.md
-- .github/docs/datebase-schema.md
-- .github/docs/business-rules.md
-- .github/docs/testing-guide.md
-
-## Licenca
-
-Defina aqui a licenca oficial do projeto (ex.: MIT, Apache-2.0, proprietaria).
+Este projeto está sob a licença MIT.
